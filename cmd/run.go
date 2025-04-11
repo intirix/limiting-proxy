@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
-
+	
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"limiting_proxy/config"
@@ -75,12 +75,19 @@ func runProxy(cmd *cobra.Command, args []string) {
 			if err := redisStorage.Watch(context.Background(), func(newCfg *config.RouteConfig) {
 				if newCfg != nil {
 					log.Printf("Updating configuration from Redis\n")
+					// map of all the target's health status
+					targetHealth := make(map[string]bool)
+
 					// Stop health check timers in old applications
 					for _, app := range manager.Applications {
 						for _, instance := range app.Instances {
 							for _, pool := range instance.Pools {
 								for _, subpool := range pool.Subpools {
 									subpool.Stop()
+									// save the health status of the target
+									for _, target := range subpool.Targets {
+										targetHealth[target.URL.String()] = target.IsHealthy
+									}
 								}
 							}
 						}
@@ -96,6 +103,12 @@ func runProxy(cmd *cobra.Command, args []string) {
 							for _, pool := range instance.Pools {
 								for _, subpool := range pool.Subpools {
 									subpool.StartHealthChecks()
+									// restore the health status of the target
+									for _, target := range subpool.Targets {
+										if _, ok := targetHealth[target.URL.String()]; ok {
+											target.IsHealthy = targetHealth[target.URL.String()]
+										}
+									}
 								}
 							}
 						}

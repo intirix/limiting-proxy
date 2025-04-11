@@ -93,8 +93,8 @@ type Target struct {
 	Proxy *httputil.ReverseProxy
 	// mu protects health check related fields
 	mu sync.RWMutex
-	// isHealthy indicates if the target is currently healthy
-	isHealthy bool
+	// IsHealthy indicates if the target is currently healthy
+	IsHealthy bool
 	// consecutiveSuccesses tracks the number of consecutive successful health checks
 	consecutiveSuccesses int
 	// consecutiveFailures tracks the number of consecutive failed health checks
@@ -155,7 +155,7 @@ func (s *Subpool) performHealthCheck(target *Target) {
 	if s.HealthCheckPath == "" {
 		// If no health check path is configured, consider target healthy
 		target.mu.Lock()
-		target.isHealthy = true
+		target.IsHealthy = true
 		target.mu.Unlock()
 		return
 	}
@@ -182,10 +182,10 @@ func (s *Subpool) performHealthCheck(target *Target) {
 		target.consecutiveSuccesses = 0
 		target.consecutiveFailures++
 		if target.consecutiveFailures >= s.AllowedFailedChecks {
-			if target.isHealthy == true {
+			if target.IsHealthy == true {
 				log.Printf("Target %s is now unhealthy after %d consecutive failed health checks\n", target.Name, s.AllowedFailedChecks)
 			}
-			target.isHealthy = false
+			target.IsHealthy = false
 		}
 		return
 	}
@@ -196,10 +196,10 @@ func (s *Subpool) performHealthCheck(target *Target) {
 		target.consecutiveFailures = 0
 		target.consecutiveSuccesses++
 		if target.consecutiveSuccesses >= s.RequiredSuccessfulChecks {
-			if target.isHealthy == false {
+			if target.IsHealthy == false {
 				log.Printf("Target %s is now healthy after %d successful health checks\n", target.Name, s.RequiredSuccessfulChecks)
 			}
-			target.isHealthy = true
+			target.IsHealthy = true
 
 		}
 	} else {
@@ -207,10 +207,10 @@ func (s *Subpool) performHealthCheck(target *Target) {
 		target.consecutiveSuccesses = 0
 		target.consecutiveFailures++
 		if target.consecutiveFailures >= s.AllowedFailedChecks {
-			if target.isHealthy == true {
+			if target.IsHealthy == true {
 				log.Printf("Target %s is now unhealthy after %d consecutive failed health checks\n", target.Name, s.AllowedFailedChecks)
 			}
-			target.isHealthy = false
+			target.IsHealthy = false
 		}
 	}
 }
@@ -338,7 +338,7 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 		URL:      targetURL,
 		Strategy: strategy,
 		Proxy:    proxy,
-		isHealthy: false, // Start unhealthy until health checks pass
+		IsHealthy: false, // Start unhealthy until health checks pass
 		consecutiveSuccesses: 0,
 		consecutiveFailures: 0,
 		lastHealthCheck: time.Time{},
@@ -366,7 +366,7 @@ func (s *Subpool) GetAvailableTarget() *Target {
 		target := s.Targets[i]
 		// Check health status
 		target.mu.RLock()
-		isHealthy := target.isHealthy
+		isHealthy := target.IsHealthy
 		target.mu.RUnlock()
 
 		if isHealthy && target.Strategy.IsAllowed(target.Name) {
