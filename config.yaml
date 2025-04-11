@@ -1,0 +1,151 @@
+applications:
+  - name: api
+    filter:
+      pathPrefix: /api
+    instances:
+      - name: api-write
+        filter:
+          methods:
+            - POST
+            - PUT
+            - DELETE
+        pools:
+          - name: write-pool
+            weight: 3
+            subpools:
+              - name: write-high
+                weight: 2
+                limit: 50
+                window: 60  # 60 seconds = 1 minute
+                insecureSkipVerify: false
+                rateLimitType: fixed-window  # Fixed window rate limiting
+                targets:
+                  - name: write-server-1
+                    url: http://localhost:8081
+                  - name: write-server-2
+                    url: http://localhost:8082
+              - name: write-low
+                weight: 1
+                limit: 30
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: fixed-window
+                targets:
+                  - name: write-server-3
+                    url: http://localhost:8083
+      - name: api-read
+        filter:
+          methods:
+            - GET
+        pools:
+          - name: read-pool
+            weight: 2
+            subpools:
+              - name: read-high
+                weight: 2
+                limit: 200
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: sliding-window  # Sliding window rate limiting
+                targets:
+                  - name: read-server-1
+                    url: http://localhost:8084
+                  - name: read-server-2
+                    url: https://localhost:8085
+              - name: read-low
+                weight: 1
+                limit: 100
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: sliding-window
+                targets:
+                  - name: read-server-3
+                    url: http://localhost:8086
+
+  - name: static
+    filter:
+      pathPrefix: /static
+    instances:
+      - name: static-images
+        filter:
+          pathPrefix: /static/images
+        pools:
+          - name: images-pool
+            weight: 2
+            subpools:
+              - name: images-high
+                weight: 2
+                limit: 200
+                window: 60
+                insecureSkipVerify: true  # Skip SSL verification for CDN
+                rateLimitType: no-limit  # No rate limiting, just round-robin
+                targets:
+                  - name: images-server-1
+                    url: https://localhost:8087
+                  - name: images-server-2
+                    url: https://localhost:8088
+              - name: images-low
+                weight: 1
+                limit: 100
+                window: 60
+                insecureSkipVerify: true
+                rateLimitType: no-limit
+                targets:
+                  - name: images-server-3
+                    url: https://localhost:8089
+      - name: static-other
+        filter: {}
+        pools:
+          - name: other-pool
+            weight: 2
+            subpools:
+              - name: other-high
+                weight: 2
+                limit: 150
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: fixed-window
+                targets:
+                  - name: other-server-1
+                    url: http://localhost:8090
+                  - name: other-server-2
+                    url: http://localhost:8091
+              - name: other-low
+                weight: 1
+                limit: 75
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: fixed-window
+                targets:
+                  - name: other-server-3
+                    url: http://localhost:8092
+
+  - name: default
+    filter: {}
+    instances:
+      - name: default-instance
+        filter: {}
+        pools:
+          - name: default-pool
+            weight: 2
+            subpools:
+              - name: default-high
+                weight: 2
+                limit: 100
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: sliding-window
+                targets:
+                  - name: default-server-1
+                    url: http://localhost:8093
+                  - name: default-server-2
+                    url: http://localhost:8094
+              - name: default-low
+                weight: 1
+                limit: 50
+                window: 60
+                insecureSkipVerify: false
+                rateLimitType: sliding-window
+                targets:
+                  - name: default-server-3
+                    url: http://localhost:8095
