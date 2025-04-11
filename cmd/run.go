@@ -87,6 +87,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 					}
 					// Create new applications with the updated config
 					newApps := newCfg.ToApplications(rlRedisClient)
+
 					// Update the application manager
 					manager.Applications = newApps
 					// Start health checks for all subpools

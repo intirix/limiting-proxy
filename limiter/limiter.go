@@ -142,8 +142,8 @@ type Subpool struct {
 	RequiredSuccessfulChecks int
 	// AllowedFailedChecks is the number of consecutive failed health checks before removal
 	AllowedFailedChecks int
-	// healthCheckTimer is used to schedule periodic health checks
-	healthCheckTimer *time.Timer
+	// healthCheckTicker is used to schedule periodic health checks
+	healthCheckTicker *time.Ticker
 	// mu protects the targets list
 	mu sync.RWMutex
 	// totalWeight is the sum of target weights
@@ -178,10 +178,13 @@ func (s *Subpool) performHealthCheck(target *Target) {
 	target.lastHealthCheck = time.Now()
 
 	if err != nil {
-		log.Printf("Health check failed for target %s: %v", target.Name, err)
+		//log.Printf("Health check failed for target %s: %v", target.Name, err)
 		target.consecutiveSuccesses = 0
 		target.consecutiveFailures++
 		if target.consecutiveFailures >= s.AllowedFailedChecks {
+			if target.isHealthy == true {
+				log.Printf("Target %s is now unhealthy after %d consecutive failed health checks\n", target.Name, s.AllowedFailedChecks)
+			}
 			target.isHealthy = false
 		}
 		return
@@ -193,13 +196,20 @@ func (s *Subpool) performHealthCheck(target *Target) {
 		target.consecutiveFailures = 0
 		target.consecutiveSuccesses++
 		if target.consecutiveSuccesses >= s.RequiredSuccessfulChecks {
+			if target.isHealthy == false {
+				log.Printf("Target %s is now healthy after %d successful health checks\n", target.Name, s.RequiredSuccessfulChecks)
+			}
 			target.isHealthy = true
+
 		}
 	} else {
-		log.Printf("Health check failed for target %s: status code %d", target.Name, resp.StatusCode)
+		//log.Printf("Health check failed for target %s: status code %d", target.Name, resp.StatusCode)
 		target.consecutiveSuccesses = 0
 		target.consecutiveFailures++
 		if target.consecutiveFailures >= s.AllowedFailedChecks {
+			if target.isHealthy == true {
+				log.Printf("Target %s is now unhealthy after %d consecutive failed health checks\n", target.Name, s.AllowedFailedChecks)
+			}
 			target.isHealthy = false
 		}
 	}
@@ -212,16 +222,22 @@ func (s *Subpool) StartHealthChecks() {
 		return
 	}
 
-	// Stop existing timer if any
-	if s.healthCheckTimer != nil {
-		s.healthCheckTimer.Stop()
+	log.Printf("Starting healthchecks for subpool %s\n", s.Name)
+
+	// Stop existing ticker if any
+	if s.healthCheckTicker != nil {
+		s.healthCheckTicker.Stop()
 	}
 
 	// Start periodic health checks
-	s.healthCheckTimer = time.NewTimer(0) // First check immediately
+	interval := s.HealthCheckInterval
+	if interval <= 0 {
+		interval = time.Second // Default to 1 second if not set
+	}
+	s.healthCheckTicker = time.NewTicker(interval)
 	go func() {
-		for {
-			<-s.healthCheckTimer.C
+		for range s.healthCheckTicker.C {
+			//log.Printf("Performing health check for subpool %s\n", s.Name)
 			s.mu.RLock()
 			targets := s.Targets
 			s.mu.RUnlock()
@@ -230,9 +246,6 @@ func (s *Subpool) StartHealthChecks() {
 			for _, target := range targets {
 				s.performHealthCheck(target)
 			}
-
-			// Reset timer for next check
-			s.healthCheckTimer.Reset(s.HealthCheckInterval)
 		}
 	}()
 }
@@ -587,8 +600,9 @@ func (am *ApplicationManager) AddApplication(app *Application) {
 
 // Stop stops all health check timers in this subpool
 func (s *Subpool) Stop() {
-	if s.healthCheckTimer != nil {
-		s.healthCheckTimer.Stop()
+	if s.healthCheckTicker != nil {
+		log.Printf("Stopping healthchecks for subpool %s\n", s.Name)
+		s.healthCheckTicker.Stop()
 	}
 }
 
