@@ -137,6 +137,7 @@ func (s *RedisStorage) Save(config *RouteConfig) error {
 			return fmt.Errorf("marshaling application %s: %w", app.Name, err)
 		}
 		pipe.Set(ctx, s.prefix+app.Name, data, 0)
+		//log.Printf("Saved application:\n%s\n", data)
 	}
 
 	_, err = pipe.Exec(ctx)

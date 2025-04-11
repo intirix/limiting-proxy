@@ -230,10 +230,10 @@ type SlowStart struct {
 }
 
 // NewSlowStart creates a new slow start strategy
-func NewSlowStart(slowStartDuration time.Duration) *SlowStart {
+func NewSlowStart(slowStartDuration time.Duration, startTime time.Time) *SlowStart {
 	return &SlowStart{
 		slowStartDuration: slowStartDuration,
-		startTime:         time.Now(),
+		startTime:         startTime,
 	}
 }
 

@@ -101,6 +101,8 @@ type Target struct {
 	consecutiveFailures int
 	// lastHealthCheck is the time of the last health check
 	lastHealthCheck time.Time
+	// startTime is the time when the target was added
+	startTime time.Time
 }
 
 // RateLimitType represents the type of rate limiting strategy to use
@@ -286,9 +288,13 @@ func NewSubpool(name string, weight, limit int, window time.Duration, insecureSk
 }
 
 // AddTarget adds a new target to the subpool
-func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Target {
+func (s *Subpool) AddTarget(name, rawURL string, startTime time.Time, redisClient *redis.Client) *Target {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
 
 	targetURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -332,7 +338,7 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 
 	if s.SlowStartDuration > 0 {
 		rateLimitList := NewRateLimitList()
-		rateLimitList.AddStrategy(NewSlowStart(s.SlowStartDuration))
+		rateLimitList.AddStrategy(NewSlowStart(s.SlowStartDuration, startTime))
 		rateLimitList.AddStrategy(strategy)
 		strategy = rateLimitList
 	}
@@ -349,6 +355,7 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 		consecutiveSuccesses: 0,
 		consecutiveFailures: 0,
 		lastHealthCheck: time.Time{},
+		startTime: startTime,
 	}
 	s.Targets = append(s.Targets, target)
 

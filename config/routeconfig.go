@@ -21,6 +21,8 @@ type TargetConfig struct {
 	Name string `yaml:"name"`
 	// URL is the full URL to the target (including scheme and host)
 	URL string `yaml:"url"`
+	// StartTime is the time when the target was added
+	StartTime time.Time `yaml:"startTime"`
 }
 
 // SubpoolConfig represents a group of targets with shared configuration
@@ -193,7 +195,7 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 
 					// Add targets to the subpool
 					for _, targetConfig := range subpoolConfig.Targets {
-						subpool.AddTarget(targetConfig.Name, targetConfig.URL, redisClient.(*redis.Client))
+						subpool.AddTarget(targetConfig.Name, targetConfig.URL, targetConfig.StartTime, redisClient.(*redis.Client))
 					}
 
 					pool.AddSubpool(subpool)
