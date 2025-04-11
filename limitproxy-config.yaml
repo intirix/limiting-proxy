@@ -1,0 +1,41 @@
+# Main proxy configuration
+listen: ":8080"
+
+# Redis configuration
+redis:
+  # Use either local: true or addresses for Redis connection
+  local: true
+  # addresses:
+  #   - "redis1:6379"
+  #   - "redis2:6379"
+  
+  # Optional Redis authentication
+  # password: "mypassword"
+  
+  # Redis database number
+  db: 0
+  
+  # Redis key for storing route configuration
+  key: "limiting_proxy_config"
+  
+  # Connection pool size
+  poolSize: 10
+  
+  # Optional Redis Sentinel configuration
+  # sentinel:
+  #   addresses:
+  #     - "sentinel1:26379"
+  #     - "sentinel2:26379"
+  #   masterName: "mymaster"
+
+# Route configuration can be embedded here or loaded from a separate file
+# routes:
+#   applications:
+#     - name: "api"
+#       priority: 1
+#       filters:
+#         - host: "api.example.com"
+#           path: "/api"
+#           methods: ["POST", "PUT", "DELETE"]
+#           limit: 50
+#           interval: 60

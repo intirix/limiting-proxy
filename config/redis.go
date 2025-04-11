@@ -14,22 +14,34 @@ type RedisStorage struct {
 	key    string
 }
 
+// RedisSentinelConfig holds Redis Sentinel configuration
+type RedisSentinelConfig struct {
+	Addresses  []string `yaml:"addresses,omitempty"`
+	MasterName string   `yaml:"masterName,omitempty"`
+}
+
 // RedisConfig holds Redis connection configuration
 type RedisConfig struct {
-	Addresses       []string
-	SentinelAddrs   []string
-	SentinelMaster  string
-	Password        string
-	DB              int
-	Key             string // Redis key to store configuration
-	PoolSize        int    // Connection pool size
+	Local     bool              `yaml:"local,omitempty"`
+	Addresses []string         `yaml:"addresses,omitempty"`
+	Password  string           `yaml:"password,omitempty"`
+	DB        int              `yaml:"db"`
+	Key       string           `yaml:"key"` // Redis key to store configuration
+	PoolSize  int              `yaml:"poolSize"`
+	Sentinel  RedisSentinelConfig `yaml:"sentinel,omitempty"`
 }
 
 // NewRedisStorage creates a new Redis storage instance
 func NewRedisStorage(cfg RedisConfig) *RedisStorage {
+	// Determine Redis addresses
+	addresses := cfg.Addresses
+	if cfg.Local {
+		addresses = []string{"localhost:6379"}
+	}
+
 	client := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs:      cfg.Addresses,
-		MasterName: cfg.SentinelMaster,
+		Addrs:      addresses,
+		MasterName: cfg.Sentinel.MasterName,
 		Password:   cfg.Password,
 		DB:         cfg.DB,
 		PoolSize:   cfg.PoolSize,

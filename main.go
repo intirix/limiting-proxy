@@ -4,7 +4,6 @@ import (
 	"flag"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/redis/go-redis/v9"
 	"limiting_proxy/config"
@@ -12,60 +11,39 @@ import (
 )
 
 func main() {
-	listenAddr := flag.String("listen", ":8080", "listen address")
-	configFile := flag.String("route-config", "route-config.yaml", "path to YAML route configuration file")
-	// Redis configuration flags
-	redisLocal := flag.Bool("redis-local", false, "Use local Redis instance (localhost:6379)")
-	redisAddrs := flag.String("redis-addrs", "", "Comma-separated list of Redis addresses (host:port)")
-	redisPassword := flag.String("redis-password", "", "Redis password")
-	redisDB := flag.Int("redis-db", 0, "Redis database number")
-	redisKey := flag.String("redis-key", "limiting_proxy_config", "Redis key for config")
-	redisPoolSize := flag.Int("redis-pool-size", 10, "Redis connection pool size")
-	
-	// Optional Redis Sentinel configuration
-	redisSentinelAddrs := flag.String("redis-sentinel-addrs", "", "Comma-separated list of Redis Sentinel addresses")
-	redisSentinelMaster := flag.String("redis-sentinel-master", "", "Name of Redis Sentinel master")
+	configFile := flag.String("config", "limitproxy-config.yaml", "path to proxy configuration file")
 	flag.Parse()
 
-	// No need to create a global proxy since we'll use per-target proxies
+	// Load proxy configuration
+	proxyConfig, err := config.LoadProxyConfig(*configFile)
+	if err != nil {
+		log.Fatal("Failed to load proxy configuration:", err)
+	}
 
 	// Create application manager
 	manager := limiter.NewApplicationManager()
 
 	// Setup configuration storage
 	var storage config.Storage
-	if *redisLocal || *redisAddrs != "" {
-		// Prepare Redis configuration
-		var redisAddresses []string
-		if *redisLocal {
-			redisAddresses = []string{"localhost:6379"}
+	if proxyConfig.Redis.Local || len(proxyConfig.Redis.Addresses) > 0 {
+		// Use Redis storage
+		storage = config.NewRedisStorage(proxyConfig.Redis)
+
+		// Log Redis configuration
+		if proxyConfig.Redis.Local {
 			log.Printf("Using local Redis instance at localhost:6379\n")
 		} else {
-			redisAddresses = strings.Split(*redisAddrs, ",")
-			log.Printf("Using Redis cluster with %d nodes\n", len(redisAddresses))
+			log.Printf("Using Redis cluster with %d nodes\n", len(proxyConfig.Redis.Addresses))
 		}
 
-		// Parse Redis Sentinel addresses if provided
-		var sentinelAddresses []string
-		if *redisSentinelAddrs != "" {
-			sentinelAddresses = strings.Split(*redisSentinelAddrs, ",")
-			log.Printf("Using Redis Sentinel with %d nodes\n", len(sentinelAddresses))
+		if len(proxyConfig.Redis.Sentinel.Addresses) > 0 {
+			log.Printf("Using Redis Sentinel with %d nodes\n", len(proxyConfig.Redis.Sentinel.Addresses))
 		}
-
-		// Use Redis storage
-		storage = config.NewRedisStorage(config.RedisConfig{
-			Addresses:       redisAddresses,
-			SentinelAddrs:   sentinelAddresses,
-			SentinelMaster:  *redisSentinelMaster,
-			Password:        *redisPassword,
-			DB:             *redisDB,
-			Key:            *redisKey,
-			PoolSize:        *redisPoolSize,
-		})
 	} else {
-		// Use YAML storage
-		storage = config.NewYAMLStorage(*configFile)
-		log.Printf("Using YAML file for configuration storage: %s\n", *configFile)
+		// Use embedded route configuration or default to route-config.yaml
+		routeConfigFile := "route-config.yaml"
+		storage = config.NewYAMLStorage(routeConfigFile)
+		log.Printf("Using YAML file for configuration storage: %s\n", routeConfigFile)
 	}
 
 	// Load initial configuration
@@ -74,23 +52,22 @@ func main() {
 		log.Fatal("Failed to load configuration:", err)
 	}
 
-	// Prepare Redis addresses for rate limiting
+	// Create Redis client for rate limiting
 	var redisAddresses []string
-	if *redisLocal {
+	if proxyConfig.Redis.Local {
 		redisAddresses = []string{"localhost:6379"}
-	} else if *redisAddrs != "" {
-		redisAddresses = strings.Split(*redisAddrs, ",")
+	} else if len(proxyConfig.Redis.Addresses) > 0 {
+		redisAddresses = proxyConfig.Redis.Addresses
 	} else {
 		redisAddresses = []string{"localhost:6379"} // Default to local Redis
 	}
 
-	// Create Redis client for rate limiting
 	rlRedisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs:      redisAddresses,
-		MasterName: *redisSentinelMaster,
-		Password:   *redisPassword,
-		DB:         *redisDB,
-		PoolSize:   *redisPoolSize,
+		MasterName: proxyConfig.Redis.Sentinel.MasterName,
+		Password:   proxyConfig.Redis.Password,
+		DB:         proxyConfig.Redis.DB,
+		PoolSize:   proxyConfig.Redis.PoolSize,
 		// Enable automatic failover and load balancing
 		ReadOnly:   true,
 	})
@@ -123,9 +100,9 @@ func main() {
 		proxy.ServeHTTP(w, r)
 	})
 
-	log.Printf("Starting proxy server on %s\n", *listenAddr)
+	log.Printf("Starting proxy server on %s\n", proxyConfig.Listen)
 
-	if err := http.ListenAndServe(*listenAddr, nil); err != nil {
+	if err := http.ListenAndServe(proxyConfig.Listen, nil); err != nil {
 		log.Fatal(err)
 	}
 }
