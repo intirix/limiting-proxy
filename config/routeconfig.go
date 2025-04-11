@@ -10,8 +10,8 @@ import (
 	"limiting_proxy/limiter"
 )
 
-// Config represents the complete proxy configuration
-type Config struct {
+// RouteConfig represents the complete proxy route configuration
+type RouteConfig struct {
 	Applications []ApplicationConfig `yaml:"applications"`
 }
 
@@ -83,10 +83,10 @@ type FilterConfig struct {
 
 // Storage defines the interface for configuration storage backends
 type Storage interface {
-	// Load loads the configuration from storage
-	Load() (*Config, error)
-	// Save saves the configuration to storage
-	Save(*Config) error
+	// Load loads the route configuration from storage
+	Load() (*RouteConfig, error)
+	// Save saves the route configuration to storage
+	Save(*RouteConfig) error
 }
 
 // YAMLStorage implements Storage interface using a YAML file
@@ -99,37 +99,37 @@ func NewYAMLStorage(filePath string) *YAMLStorage {
 	return &YAMLStorage{FilePath: filePath}
 }
 
-// Load loads configuration from YAML file
-func (s *YAMLStorage) Load() (*Config, error) {
+// Load loads route configuration from YAML file
+func (s *YAMLStorage) Load() (*RouteConfig, error) {
 	data, err := os.ReadFile(s.FilePath)
 	if err != nil {
-		return nil, fmt.Errorf("reading config file: %w", err)
+		return nil, fmt.Errorf("reading route config file: %w", err)
 	}
 
-	var config Config
+	var config RouteConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing config file: %w", err)
+		return nil, fmt.Errorf("parsing route config file: %w", err)
 	}
 
 	return &config, nil
 }
 
-// Save saves configuration to YAML file
-func (s *YAMLStorage) Save(config *Config) error {
+// Save saves route configuration to YAML file
+func (s *YAMLStorage) Save(config *RouteConfig) error {
 	data, err := yaml.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+		return fmt.Errorf("marshaling route config: %w", err)
 	}
 
 	if err := os.WriteFile(s.FilePath, data, 0644); err != nil {
-		return fmt.Errorf("writing config file: %w", err)
+		return fmt.Errorf("writing route config file: %w", err)
 	}
 
 	return nil
 }
 
-// ToApplications converts configuration to runtime applications
-func (c *Config) ToApplications(redisClient redis.UniversalClient) []*limiter.Application {
+// ToApplications converts route configuration to runtime applications
+func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limiter.Application {
 	var apps []*limiter.Application
 	for _, appConfig := range c.Applications {
 		app := limiter.NewApplication(

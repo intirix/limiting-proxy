@@ -43,18 +43,18 @@ func NewRedisStorage(cfg RedisConfig) *RedisStorage {
 	}
 }
 
-// Load loads configuration from Redis
-func (s *RedisStorage) Load() (*Config, error) {
+// Load loads route configuration from Redis
+func (s *RedisStorage) Load() (*RouteConfig, error) {
 	ctx := context.Background()
 	data, err := s.client.Get(ctx, s.key).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			return &Config{Applications: make([]ApplicationConfig, 0)}, nil
+			return &RouteConfig{Applications: make([]ApplicationConfig, 0)}, nil
 		}
 		return nil, fmt.Errorf("reading from redis: %w", err)
 	}
 
-	var config Config
+	var config RouteConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("parsing redis data: %w", err)
 	}
@@ -62,12 +62,12 @@ func (s *RedisStorage) Load() (*Config, error) {
 	return &config, nil
 }
 
-// Save saves configuration to Redis
-func (s *RedisStorage) Save(config *Config) error {
+// Save saves route configuration to Redis
+func (s *RedisStorage) Save(config *RouteConfig) error {
 	ctx := context.Background()
 	data, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+		return fmt.Errorf("marshaling route config: %w", err)
 	}
 
 	if err := s.client.Set(ctx, s.key, data, 0).Err(); err != nil {
@@ -82,8 +82,8 @@ func (s *RedisStorage) Close() error {
 	return s.client.Close()
 }
 
-// Watch watches for configuration changes in Redis
-func (s *RedisStorage) Watch(ctx context.Context, onChange func(*Config)) error {
+// Watch watches for route configuration changes in Redis
+func (s *RedisStorage) Watch(ctx context.Context, onChange func(*RouteConfig)) error {
 	pubsub := s.client.Subscribe(ctx, s.key+"_changes")
 	defer pubsub.Close()
 
@@ -100,7 +100,7 @@ func (s *RedisStorage) Watch(ctx context.Context, onChange func(*Config)) error 
 		case <-ctx.Done():
 			return nil
 		case msg := <-pubsub.Channel():
-			var config Config
+			var config RouteConfig
 			if err := json.Unmarshal([]byte(msg.Payload), &config); err != nil {
 				continue
 			}
@@ -109,12 +109,12 @@ func (s *RedisStorage) Watch(ctx context.Context, onChange func(*Config)) error 
 	}
 }
 
-// NotifyChange notifies other instances about configuration changes
-func (s *RedisStorage) NotifyChange(config *Config) error {
+// NotifyChange notifies other instances about route configuration changes
+func (s *RedisStorage) NotifyChange(config *RouteConfig) error {
 	ctx := context.Background()
 	data, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+		return fmt.Errorf("marshaling route config: %w", err)
 	}
 
 	return s.client.Publish(ctx, s.key+"_changes", data).Err()

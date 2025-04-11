@@ -13,7 +13,7 @@ import (
 
 func main() {
 	listenAddr := flag.String("listen", ":8080", "listen address")
-	configFile := flag.String("config", "config.yaml", "path to YAML config file")
+	configFile := flag.String("route-config", "route-config.yaml", "path to YAML route configuration file")
 	// Redis configuration flags
 	redisLocal := flag.Bool("redis-local", false, "Use local Redis instance (localhost:6379)")
 	redisAddrs := flag.String("redis-addrs", "", "Comma-separated list of Redis addresses (host:port)")
