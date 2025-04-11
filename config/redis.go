@@ -10,25 +10,31 @@ import (
 
 // RedisStorage implements Storage interface using Redis
 type RedisStorage struct {
-	client *redis.Client
+	client redis.UniversalClient
 	key    string
 }
 
 // RedisConfig holds Redis connection configuration
 type RedisConfig struct {
-	Host     string
-	Port     int
-	Password string
-	DB       int
-	Key      string // Redis key to store configuration
+	Addresses       []string
+	SentinelAddrs   []string
+	SentinelMaster  string
+	Password        string
+	DB              int
+	Key             string // Redis key to store configuration
+	PoolSize        int    // Connection pool size
 }
 
 // NewRedisStorage creates a new Redis storage instance
 func NewRedisStorage(cfg RedisConfig) *RedisStorage {
-	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Password: cfg.Password,
-		DB:       cfg.DB,
+	client := redis.NewUniversalClient(&redis.UniversalOptions{
+		Addrs:      cfg.Addresses,
+		MasterName: cfg.SentinelMaster,
+		Password:   cfg.Password,
+		DB:         cfg.DB,
+		PoolSize:   cfg.PoolSize,
+		// Enable automatic failover and load balancing
+		ReadOnly:   true,
 	})
 
 	return &RedisStorage{
