@@ -330,6 +330,13 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval, s.SlowStartDuration)
 	}
 
+	if s.SlowStartDuration > 0 {
+		rateLimitList := NewRateLimitList()
+		rateLimitList.AddStrategy(NewSlowStart(s.SlowStartDuration))
+		rateLimitList.AddStrategy(strategy)
+		strategy = rateLimitList
+	}
+
 	// log the type of the strategy
 	log.Printf("Created strategy of type %T for target %s\n", strategy, name)
 

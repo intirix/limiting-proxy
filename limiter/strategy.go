@@ -3,7 +3,8 @@ package limiter
 import (
 	"context"
 	"fmt"
-	//"log"
+	"log"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -36,7 +37,6 @@ func NewFixedWindowRedis(client *redis.Client, limit int, window time.Duration, 
 		window:           window,
 		keyPrefix:        keyPrefix,
 		checkInterval:    checkInterval,
-		slowStartDuration: slowStartDuration,
 		startTime:        time.Now(),
 		localCounters:    &sync.Map{},
 		lastSync:         &sync.Map{},
@@ -47,8 +47,7 @@ func NewFixedWindowRedis(client *redis.Client, limit int, window time.Duration, 
 func (fw *FixedWindowRedis) IsAllowed(key string) bool {
 	windowKey := fmt.Sprintf("%s:%d", key, time.Now().Unix()/int64(fw.window.Seconds()))
 
-	// Calculate current limit based on slow start
-	currentLimit := fw.getCurrentLimit()
+	currentLimit := int64(fw.limit)
 
 	// Get or initialize local counter
 	counterVal, _ := fw.localCounters.LoadOrStore(windowKey, int64(0))
@@ -83,7 +82,7 @@ func (fw *FixedWindowRedis) IsAllowed(key string) bool {
 
 		v := incr.Val()
 
-		//log.Printf("currentValue: %d, currentLimit: %d", v, currentLimit)
+		log.Printf("currentValue: %d, currentLimit: %d", v, currentLimit)
 
 		return v <= currentLimit
 	}
@@ -126,8 +125,7 @@ func NewSlidingWindowRedis(client *redis.Client, limit int, window time.Duration
 func (sw *SlidingWindowRedis) IsAllowed(key string) bool {
 	now := time.Now()
 
-	// Calculate current limit based on slow start
-	currentLimit := sw.getCurrentLimit()
+	currentLimit := int64(sw.limit)
 
 	// Get or initialize local events list
 	eventsVal, _ := sw.localEvents.LoadOrStore(key, []time.Time{})
@@ -199,42 +197,6 @@ func (sw *SlidingWindowRedis) IsAllowed(key string) bool {
 	return int64(len(validEvents)) <= currentLimit
 }
 
-// getCurrentLimit returns the current rate limit based on slow start duration
-func (fw *FixedWindowRedis) getCurrentLimit() int64 {
-	if fw.slowStartDuration == 0 {
-		return int64(fw.limit)
-	}
-
-	elapsed := time.Since(fw.startTime)
-	if elapsed >= fw.slowStartDuration {
-		return int64(fw.limit)
-	}
-
-	// Calculate percentage of slow start duration completed
-	percentage := float64(elapsed) / float64(fw.slowStartDuration)
-	// Start at 10% of the limit and linearly increase to 100%
-	minLimit := float64(fw.limit) * 0.1
-	return int64(minLimit + (float64(fw.limit)-minLimit)*percentage)
-}
-
-// getCurrentLimit returns the current rate limit based on slow start duration
-func (sw *SlidingWindowRedis) getCurrentLimit() int64 {
-	if sw.slowStartDuration == 0 {
-		return int64(sw.limit)
-	}
-
-	elapsed := time.Since(sw.startTime)
-	if elapsed >= sw.slowStartDuration {
-		return int64(sw.limit)
-	}
-
-	// Calculate percentage of slow start duration completed
-	percentage := float64(elapsed) / float64(sw.slowStartDuration)
-	// Start at 10% of the limit and linearly increase to 100%
-	minLimit := float64(sw.limit) * 0.1
-	return int64(minLimit + (float64(sw.limit)-minLimit)*percentage)
-}
-
 // RoundRobin implements a simple round-robin strategy without rate limiting
 type RoundRobin struct {
 	current int
@@ -260,3 +222,64 @@ func (rr *RoundRobin) GetNext() int {
 	rr.current = (rr.current + 1) % rr.total
 	return next
 }
+
+// SlowStart implements a slow rampup period by randomly rejecting requests
+type SlowStart struct {
+	slowStartDuration time.Duration
+	startTime        time.Time
+}
+
+// NewSlowStart creates a new slow start strategy
+func NewSlowStart(slowStartDuration time.Duration) *SlowStart {
+	return &SlowStart{
+		slowStartDuration: slowStartDuration,
+		startTime:         time.Now(),
+	}
+}
+
+// IsAllowed checks if the request is allowed based on the slow start duration
+func (ss *SlowStart) IsAllowed(key string) bool {
+	if ss.slowStartDuration == 0 {
+		return true
+	}
+
+	elapsed := time.Since(ss.startTime)
+	if elapsed >= ss.slowStartDuration {
+		return true
+	}
+
+	// Calculate percentage of slow start duration completed
+	percentage := float64(elapsed) / float64(ss.slowStartDuration)
+
+	// return true randomly based on percentage
+	v := rand.Float64()
+	//log.Printf("v: %f, percentage: %f", v, percentage)
+	return v < percentage
+}
+
+type RateLimitList struct {
+	list []RateLimitStrategy
+}
+
+// NewRateLimitList creates a new rate limit list
+func NewRateLimitList() *RateLimitList {
+	return &RateLimitList{
+		list: make([]RateLimitStrategy, 0),
+	}
+}
+
+// AddStrategy adds a new rate limit strategy to the list
+func (rl *RateLimitList) AddStrategy(strategy RateLimitStrategy) {
+	rl.list = append(rl.list, strategy)
+}
+
+// IsAllowed checks if the request is allowed based on the rate limit list
+func (rl *RateLimitList) IsAllowed(key string) bool {
+	for _, strategy := range rl.list {
+		if !strategy.IsAllowed(key) {
+			return false
+		}
+	}
+	return true
+}
+
