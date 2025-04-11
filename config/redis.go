@@ -121,6 +121,15 @@ func (s *RedisStorage) Watch(ctx context.Context, onChange func(*RouteConfig)) e
 	}
 }
 
+// Clear removes all route configuration from Redis
+func (s *RedisStorage) Clear() error {
+	ctx := context.Background()
+	if err := s.client.Del(ctx, s.key).Err(); err != nil {
+		return fmt.Errorf("clearing redis key: %w", err)
+	}
+	return nil
+}
+
 // NotifyChange notifies other instances about route configuration changes
 func (s *RedisStorage) NotifyChange(config *RouteConfig) error {
 	ctx := context.Background()
