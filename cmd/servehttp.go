@@ -4,6 +4,8 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -23,10 +25,40 @@ var (
 func init() {
 	servehttpCmd.Flags().StringVarP(&port, "port", "p", "8080", "port to listen on")
 	servehttpCmd.Flags().StringVarP(&directory, "directory", "d", ".", "directory to serve files from")
+	servehttpCmd.Flags().Bool("log-rate", false, "log request rate every second")
 	rootCmd.AddCommand(servehttpCmd)
 }
 
 func serveHTTP(cmd *cobra.Command, args []string) {
+	// Get log rate flag
+	logRate, err := cmd.Flags().GetBool("log-rate")
+	if err != nil {
+		log.Fatal("Error getting log-rate flag:", err)
+	}
+
+	// Create request counter for rate logging
+	var requestCount int64
+	var requestMutex sync.Mutex
+
+	// Start rate logging if enabled
+	if logRate {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			for range ticker.C {
+				requestMutex.Lock()
+				count := requestCount
+				requestCount = 0
+				requestMutex.Unlock()
+
+				if count > 0 {
+					log.Printf("Received %d requests in the last second\n", count)
+				}
+			}
+		}()
+	}
+
 	// Convert directory to absolute path
 	absDir, err := filepath.Abs(directory)
 	if err != nil {
@@ -41,12 +73,23 @@ func serveHTTP(cmd *cobra.Command, args []string) {
 
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if logRate {
+			requestMutex.Lock()
+			requestCount++
+			requestMutex.Unlock()
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
 	// Add file server handler for all other paths
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if logRate {
+			requestMutex.Lock()
+			requestCount++
+			requestMutex.Unlock()
+		}
+
 		// Add CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
