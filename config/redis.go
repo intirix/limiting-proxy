@@ -11,7 +11,7 @@ import (
 // RedisStorage implements Storage interface using Redis
 type RedisStorage struct {
 	client redis.UniversalClient
-	key    string
+	prefix string // Key prefix for all application configs
 }
 
 // RedisSentinelConfig holds Redis Sentinel configuration
@@ -51,39 +51,97 @@ func NewRedisStorage(cfg RedisConfig) *RedisStorage {
 
 	return &RedisStorage{
 		client: client,
-		key:    cfg.Key,
+		prefix: cfg.Key + ":",
 	}
 }
 
 // Load loads route configuration from Redis
 func (s *RedisStorage) Load() (*RouteConfig, error) {
 	ctx := context.Background()
-	data, err := s.client.Get(ctx, s.key).Bytes()
+
+	// Get all keys matching our prefix
+	keys, err := s.client.Keys(ctx, s.prefix+"*").Result()
 	if err != nil {
-		if err == redis.Nil {
-			return &RouteConfig{Applications: make([]ApplicationConfig, 0)}, nil
+		return nil, fmt.Errorf("listing redis keys: %w", err)
+	}
+
+	// Create empty config if no keys found
+	if len(keys) == 0 {
+		return &RouteConfig{Applications: make([]ApplicationConfig, 0)}, nil
+	}
+
+	// Load all applications in parallel using a pipeline
+	pipe := s.client.Pipeline()
+	gets := make(map[string]*redis.StringCmd)
+	for _, key := range keys {
+		gets[key] = pipe.Get(ctx, key)
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("executing redis pipeline: %w", err)
+	}
+
+	// Collect all applications
+	apps := make([]ApplicationConfig, 0, len(keys))
+	for key, cmd := range gets {
+		data, err := cmd.Bytes()
+		if err != nil {
+			if err == redis.Nil {
+				continue
+			}
+			return nil, fmt.Errorf("reading application data: %w", err)
 		}
-		return nil, fmt.Errorf("reading from redis: %w", err)
+
+		var app ApplicationConfig
+		if err := json.Unmarshal(data, &app); err != nil {
+			return nil, fmt.Errorf("parsing application data for key %s: %w", key, err)
+		}
+		apps = append(apps, app)
 	}
 
-	var config RouteConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parsing redis data: %w", err)
-	}
-
-	return &config, nil
+	return &RouteConfig{Applications: apps}, nil
 }
 
 // Save saves route configuration to Redis
 func (s *RedisStorage) Save(config *RouteConfig) error {
 	ctx := context.Background()
-	data, err := json.Marshal(config)
+
+	// First, get existing keys to clean up removed applications
+	existingKeys, err := s.client.Keys(ctx, s.prefix+"*").Result()
 	if err != nil {
-		return fmt.Errorf("marshaling route config: %w", err)
+		return fmt.Errorf("listing redis keys: %w", err)
 	}
 
-	if err := s.client.Set(ctx, s.key, data, 0).Err(); err != nil {
-		return fmt.Errorf("writing to redis: %w", err)
+	// Create a set of new application names for quick lookup
+	newApps := make(map[string]struct{}, len(config.Applications))
+	for _, app := range config.Applications {
+		newApps[app.Name] = struct{}{}
+	}
+
+	// Delete keys for applications that no longer exist
+	for _, key := range existingKeys {
+		appName := key[len(s.prefix):] // Remove prefix to get app name
+		if _, exists := newApps[appName]; !exists {
+			if err := s.client.Del(ctx, key).Err(); err != nil {
+				return fmt.Errorf("deleting removed application %s: %w", appName, err)
+			}
+		}
+	}
+
+	// Save each application in parallel using a pipeline
+	pipe := s.client.Pipeline()
+	for _, app := range config.Applications {
+		data, err := json.Marshal(app)
+		if err != nil {
+			return fmt.Errorf("marshaling application %s: %w", app.Name, err)
+		}
+		pipe.Set(ctx, s.prefix+app.Name, data, 0)
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("executing redis pipeline: %w", err)
 	}
 
 	return nil
@@ -96,7 +154,9 @@ func (s *RedisStorage) Close() error {
 
 // Watch watches for route configuration changes in Redis
 func (s *RedisStorage) Watch(ctx context.Context, onChange func(*RouteConfig)) error {
-	pubsub := s.client.Subscribe(ctx, s.key+"_changes")
+	// Subscribe to changes channel
+	changeChannel := s.prefix + "changes"
+	pubsub := s.client.Subscribe(ctx, changeChannel)
 	defer pubsub.Close()
 
 	// Initial load
@@ -111,12 +171,13 @@ func (s *RedisStorage) Watch(ctx context.Context, onChange func(*RouteConfig)) e
 		select {
 		case <-ctx.Done():
 			return nil
-		case msg := <-pubsub.Channel():
-			var config RouteConfig
-			if err := json.Unmarshal([]byte(msg.Payload), &config); err != nil {
+		case <-pubsub.Channel():
+			// Load fresh configuration when we receive a change notification
+			config, err := s.Load()
+			if err != nil {
 				continue
 			}
-			onChange(&config)
+			onChange(config)
 		}
 	}
 }
@@ -124,19 +185,26 @@ func (s *RedisStorage) Watch(ctx context.Context, onChange func(*RouteConfig)) e
 // Clear removes all route configuration from Redis
 func (s *RedisStorage) Clear() error {
 	ctx := context.Background()
-	if err := s.client.Del(ctx, s.key).Err(); err != nil {
-		return fmt.Errorf("clearing redis key: %w", err)
+
+	// Get all keys matching our prefix
+	keys, err := s.client.Keys(ctx, s.prefix+"*").Result()
+	if err != nil {
+		return fmt.Errorf("listing redis keys: %w", err)
 	}
+
+	if len(keys) > 0 {
+		// Delete all keys in a single operation
+		if err := s.client.Del(ctx, keys...).Err(); err != nil {
+			return fmt.Errorf("clearing redis keys: %w", err)
+		}
+	}
+
 	return nil
 }
 
 // NotifyChange notifies other instances about route configuration changes
 func (s *RedisStorage) NotifyChange(config *RouteConfig) error {
 	ctx := context.Background()
-	data, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("marshaling route config: %w", err)
-	}
-
-	return s.client.Publish(ctx, s.key+"_changes", data).Err()
+	// Just publish a notification - subscribers will load the fresh config
+	return s.client.Publish(ctx, s.prefix+"changes", "updated").Err()
 }
