@@ -118,6 +118,8 @@ type Subpool struct {
 	TimeWindow time.Duration
 	// InsecureSkipVerify disables SSL certificate validation
 	InsecureSkipVerify bool
+	// CheckInterval determines how often to sync with Redis (in number of requests)
+	CheckInterval int
 	// mu protects the targets list
 	mu sync.RWMutex
 	// totalWeight is the sum of target weights
@@ -125,14 +127,15 @@ type Subpool struct {
 }
 
 // NewSubpool creates a new Subpool
-func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool) *Subpool {
+func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int) *Subpool {
 	return &Subpool{
 		Name:              name,
 		Weight:            weight,
 		Targets:           make([]*Target, 0),
 		InsecureSkipVerify: insecureSkipVerify,
-		RequestLimit: limit,
-		TimeWindow:   window,
+		RequestLimit:       limit,
+		TimeWindow:         window,
+		CheckInterval:      checkInterval,
 	}
 }
 
@@ -164,16 +167,21 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 	}
 
 	// Create rate limiting strategy based on configuration
+	checkInterval := s.CheckInterval
+	if checkInterval <= 0 {
+		checkInterval = 10 // Default to sync with Redis every 10 requests
+	}
+
 	var strategy RateLimitStrategy
 	switch s.RateLimitType {
 	case FixedWindow:
-		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed")
+		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval)
 	case SlidingWindow:
-		strategy = NewSlidingWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "sliding")
+		strategy = NewSlidingWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "sliding", checkInterval)
 	case NoLimit:
 		strategy = NewRoundRobin(len(s.Targets) + 1) // +1 for the new target
 	default:
-		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed")
+		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval)
 	}
 
 	target := &Target{

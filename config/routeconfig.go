@@ -39,6 +39,8 @@ type SubpoolConfig struct {
 	InsecureSkipVerify bool `yaml:"insecureSkipVerify,omitempty"`
 	// RateLimitType determines which strategy to use (fixed-window, sliding-window, no-limit)
 	RateLimitType string `yaml:"rateLimitType,omitempty"`
+	// CheckInterval determines how often to sync with Redis (in number of requests)
+	CheckInterval int `yaml:"checkInterval,omitempty"`
 }
 
 // PoolConfig represents a group of subpools
@@ -167,6 +169,7 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 						subpoolConfig.Limit,
 						time.Duration(subpoolConfig.Window)*time.Second,
 						subpoolConfig.InsecureSkipVerify,
+						subpoolConfig.CheckInterval,
 					)
 
 					// Add targets to the subpool
