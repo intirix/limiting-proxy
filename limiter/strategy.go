@@ -16,31 +16,38 @@ type RateLimitStrategy interface {
 
 // FixedWindowRedis implements a fixed window rate limit using Redis
 type FixedWindowRedis struct {
-	client        *redis.Client
-	limit         int
-	window        time.Duration
-	keyPrefix     string
-	checkInterval int
-	localCounters *sync.Map
-	lastSync      *sync.Map
+	client           *redis.Client
+	limit            int
+	window           time.Duration
+	keyPrefix        string
+	checkInterval    int
+	slowStartDuration time.Duration
+	startTime        time.Time
+	localCounters    *sync.Map
+	lastSync         *sync.Map
 }
 
 // NewFixedWindowRedis creates a new fixed window rate limiter using Redis
-func NewFixedWindowRedis(client *redis.Client, limit int, window time.Duration, keyPrefix string, checkInterval int) *FixedWindowRedis {
+func NewFixedWindowRedis(client *redis.Client, limit int, window time.Duration, keyPrefix string, checkInterval int, slowStartDuration time.Duration) *FixedWindowRedis {
 	return &FixedWindowRedis{
-		client:        client,
-		limit:         limit,
-		window:        window,
-		keyPrefix:     keyPrefix,
-		checkInterval: checkInterval,
-		localCounters: &sync.Map{},
-		lastSync:      &sync.Map{},
+		client:           client,
+		limit:            limit,
+		window:           window,
+		keyPrefix:        keyPrefix,
+		checkInterval:    checkInterval,
+		slowStartDuration: slowStartDuration,
+		startTime:        time.Now(),
+		localCounters:    &sync.Map{},
+		lastSync:         &sync.Map{},
 	}
 }
 
 // IsAllowed checks if the request is allowed using a fixed window counter
 func (fw *FixedWindowRedis) IsAllowed(key string) bool {
 	windowKey := fmt.Sprintf("%s:%d", key, time.Now().Unix()/int64(fw.window.Seconds()))
+
+	// Calculate current limit based on slow start
+	currentLimit := fw.getCurrentLimit()
 
 	// Get or initialize local counter
 	counterVal, _ := fw.localCounters.LoadOrStore(windowKey, int64(0))
@@ -73,42 +80,49 @@ func (fw *FixedWindowRedis) IsAllowed(key string) bool {
 		fw.localCounters.Store(windowKey, int64(0))
 		fw.lastSync.Store(windowKey, time.Now())
 
-		return incr.Val() <= int64(fw.limit)
+		return incr.Val() <= currentLimit
 	}
 
 	// If we haven't synced, estimate based on local counter
-	return counter <= int64(fw.limit)
+	return counter <= currentLimit
 }
 
 // SlidingWindowRedis implements a sliding window rate limit using Redis
 type SlidingWindowRedis struct {
-	client        *redis.Client
-	limit         int
-	window        time.Duration
-	keyPrefix     string
-	checkInterval int
-	localCounters *sync.Map
-	lastSync      *sync.Map
-	localEvents   *sync.Map
+	client           *redis.Client
+	limit            int
+	window           time.Duration
+	keyPrefix        string
+	checkInterval    int
+	slowStartDuration time.Duration
+	startTime        time.Time
+	localCounters    *sync.Map
+	lastSync         *sync.Map
+	localEvents      *sync.Map
 }
 
 // NewSlidingWindowRedis creates a new sliding window rate limiter using Redis
-func NewSlidingWindowRedis(client *redis.Client, limit int, window time.Duration, keyPrefix string, checkInterval int) *SlidingWindowRedis {
+func NewSlidingWindowRedis(client *redis.Client, limit int, window time.Duration, keyPrefix string, checkInterval int, slowStartDuration time.Duration) *SlidingWindowRedis {
 	return &SlidingWindowRedis{
-		client:        client,
-		limit:         limit,
-		window:        window,
-		keyPrefix:     keyPrefix,
-		checkInterval: checkInterval,
-		localCounters: &sync.Map{},
-		lastSync:      &sync.Map{},
-		localEvents:   &sync.Map{},
+		client:           client,
+		limit:            limit,
+		window:           window,
+		keyPrefix:        keyPrefix,
+		checkInterval:    checkInterval,
+		slowStartDuration: slowStartDuration,
+		startTime:        time.Now(),
+		localCounters:    &sync.Map{},
+		lastSync:         &sync.Map{},
+		localEvents:      &sync.Map{},
 	}
 }
 
 // IsAllowed checks if the request is allowed using a sliding window counter
 func (sw *SlidingWindowRedis) IsAllowed(key string) bool {
 	now := time.Now()
+
+	// Calculate current limit based on slow start
+	currentLimit := sw.getCurrentLimit()
 
 	// Get or initialize local events list
 	eventsVal, _ := sw.localEvents.LoadOrStore(key, []time.Time{})
@@ -170,11 +184,47 @@ func (sw *SlidingWindowRedis) IsAllowed(key string) bool {
 		sw.localCounters.Store(key, int64(0))
 		sw.lastSync.Store(key, now)
 
-		return count.Val() <= int64(sw.limit)
+		return count.Val() <= currentLimit
 	}
 
 	// If we haven't synced, use local count
-	return int64(len(validEvents)) <= int64(sw.limit)
+	return int64(len(validEvents)) <= currentLimit
+}
+
+// getCurrentLimit returns the current rate limit based on slow start duration
+func (fw *FixedWindowRedis) getCurrentLimit() int64 {
+	if fw.slowStartDuration == 0 {
+		return int64(fw.limit)
+	}
+
+	elapsed := time.Since(fw.startTime)
+	if elapsed >= fw.slowStartDuration {
+		return int64(fw.limit)
+	}
+
+	// Calculate percentage of slow start duration completed
+	percentage := float64(elapsed) / float64(fw.slowStartDuration)
+	// Start at 10% of the limit and linearly increase to 100%
+	minLimit := float64(fw.limit) * 0.1
+	return int64(minLimit + (float64(fw.limit)-minLimit)*percentage)
+}
+
+// getCurrentLimit returns the current rate limit based on slow start duration
+func (sw *SlidingWindowRedis) getCurrentLimit() int64 {
+	if sw.slowStartDuration == 0 {
+		return int64(sw.limit)
+	}
+
+	elapsed := time.Since(sw.startTime)
+	if elapsed >= sw.slowStartDuration {
+		return int64(sw.limit)
+	}
+
+	// Calculate percentage of slow start duration completed
+	percentage := float64(elapsed) / float64(sw.slowStartDuration)
+	// Start at 10% of the limit and linearly increase to 100%
+	minLimit := float64(sw.limit) * 0.1
+	return int64(minLimit + (float64(sw.limit)-minLimit)*percentage)
 }
 
 // RoundRobin implements a simple round-robin strategy without rate limiting

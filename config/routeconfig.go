@@ -41,6 +41,8 @@ type SubpoolConfig struct {
 	RateLimitType string `yaml:"rateLimitType,omitempty"`
 	// CheckInterval determines how often to sync with Redis (in number of requests)
 	CheckInterval int `yaml:"checkInterval,omitempty"`
+	// SlowStartDuration is the duration over which to gradually increase the rate limit (in seconds)
+	SlowStartDuration int `yaml:"slowStartDuration,omitempty"`
 }
 
 // PoolConfig represents a group of subpools
@@ -170,6 +172,7 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 						time.Duration(subpoolConfig.Window)*time.Second,
 						subpoolConfig.InsecureSkipVerify,
 						subpoolConfig.CheckInterval,
+						time.Duration(subpoolConfig.SlowStartDuration)*time.Second,
 					)
 
 					// Add targets to the subpool

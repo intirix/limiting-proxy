@@ -120,6 +120,8 @@ type Subpool struct {
 	InsecureSkipVerify bool
 	// CheckInterval determines how often to sync with Redis (in number of requests)
 	CheckInterval int
+	// SlowStartDuration is the duration over which to gradually increase the rate limit
+	SlowStartDuration time.Duration
 	// mu protects the targets list
 	mu sync.RWMutex
 	// totalWeight is the sum of target weights
@@ -127,7 +129,7 @@ type Subpool struct {
 }
 
 // NewSubpool creates a new Subpool
-func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int) *Subpool {
+func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration) *Subpool {
 	return &Subpool{
 		Name:              name,
 		Weight:            weight,
@@ -136,6 +138,7 @@ func NewSubpool(name string, weight, limit int, window time.Duration, insecureSk
 		RequestLimit:       limit,
 		TimeWindow:         window,
 		CheckInterval:      checkInterval,
+		SlowStartDuration:  slowStartDuration,
 	}
 }
 
@@ -175,13 +178,13 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 	var strategy RateLimitStrategy
 	switch s.RateLimitType {
 	case FixedWindow:
-		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval)
+		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval, s.SlowStartDuration)
 	case SlidingWindow:
-		strategy = NewSlidingWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "sliding", checkInterval)
+		strategy = NewSlidingWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "sliding", checkInterval, s.SlowStartDuration)
 	case NoLimit:
 		strategy = NewRoundRobin(len(s.Targets) + 1) // +1 for the new target
 	default:
-		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval)
+		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval, s.SlowStartDuration)
 	}
 
 	target := &Target{
