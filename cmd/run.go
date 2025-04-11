@@ -75,10 +75,30 @@ func runProxy(cmd *cobra.Command, args []string) {
 			if err := redisStorage.Watch(context.Background(), func(newCfg *config.RouteConfig) {
 				if newCfg != nil {
 					log.Printf("Updating configuration from Redis\n")
+					// Stop health check timers in old applications
+					for _, app := range manager.Applications {
+						for _, instance := range app.Instances {
+							for _, pool := range instance.Pools {
+								for _, subpool := range pool.Subpools {
+									subpool.Stop()
+								}
+							}
+						}
+					}
 					// Create new applications with the updated config
 					newApps := newCfg.ToApplications(rlRedisClient)
 					// Update the application manager
 					manager.Applications = newApps
+					// Start health checks for all subpools
+					for _, app := range newApps {
+						for _, instance := range app.Instances {
+							for _, pool := range instance.Pools {
+								for _, subpool := range pool.Subpools {
+									subpool.StartHealthChecks()
+								}
+							}
+						}
+					}
 				}
 			}); err != nil {
 				log.Printf("Error watching Redis configuration: %v\n", err)
@@ -99,6 +119,17 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Convert configuration to applications
 	apps := cfg.ToApplications(rlRedisClient)
+
+	// Start health checks for all subpools
+	for _, app := range apps {
+		for _, instance := range app.Instances {
+			for _, pool := range instance.Pools {
+				for _, subpool := range pool.Subpools {
+					subpool.StartHealthChecks()
+				}
+			}
+		}
+	}
 	for _, app := range apps {
 		manager.AddApplication(app)
 	}

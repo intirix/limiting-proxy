@@ -183,6 +183,11 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 						subpoolConfig.InsecureSkipVerify,
 						subpoolConfig.CheckInterval,
 						time.Duration(subpoolConfig.SlowStartDuration)*time.Second,
+						subpoolConfig.HealthCheckPath,
+						time.Duration(subpoolConfig.HealthCheckInterval)*time.Second,
+						time.Duration(subpoolConfig.HealthCheckTimeout)*time.Second,
+						subpoolConfig.RequiredSuccessfulChecks,
+						subpoolConfig.AllowedFailedChecks,
 					)
 
 					// Add targets to the subpool

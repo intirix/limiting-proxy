@@ -205,9 +205,10 @@ func (s *Subpool) performHealthCheck(target *Target) {
 	}
 }
 
-// startHealthChecks starts periodic health checks for all targets
-func (s *Subpool) startHealthChecks() {
+// StartHealthChecks starts periodic health checks for all targets
+func (s *Subpool) StartHealthChecks() {
 	if s.HealthCheckInterval <= 0 || s.HealthCheckPath == "" {
+		log.Printf("Health check interval or path not configured for subpool %s\n", s.Name)
 		return
 	}
 
@@ -237,20 +238,22 @@ func (s *Subpool) startHealthChecks() {
 }
 
 // NewSubpool creates a new Subpool
-func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration) *Subpool {
+func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration, healthCheckPath string, healthCheckInterval, healthCheckTimeout time.Duration, requiredSuccessfulChecks, allowedFailedChecks int) *Subpool {
 	s := &Subpool{
-		Name:              name,
-		Weight:            weight,
-		Targets:           make([]*Target, 0),
-		InsecureSkipVerify: insecureSkipVerify,
-		RequestLimit:       limit,
-		TimeWindow:         window,
-		CheckInterval:      checkInterval,
-		SlowStartDuration:  slowStartDuration,
+		Name:                    name,
+		Weight:                  weight,
+		Targets:                 make([]*Target, 0),
+		InsecureSkipVerify:      insecureSkipVerify,
+		RequestLimit:            limit,
+		TimeWindow:              window,
+		CheckInterval:           checkInterval,
+		SlowStartDuration:       slowStartDuration,
+		HealthCheckPath:         healthCheckPath,
+		HealthCheckInterval:     healthCheckInterval,
+		HealthCheckTimeout:      healthCheckTimeout,
+		RequiredSuccessfulChecks: requiredSuccessfulChecks,
+		AllowedFailedChecks:     allowedFailedChecks,
 	}
-
-	// Start health checks
-	s.startHealthChecks()
 
 	return s
 }
@@ -563,6 +566,13 @@ func (am *ApplicationManager) AddApplication(app *Application) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 	am.Applications = append(am.Applications, app)
+}
+
+// Stop stops all health check timers in this subpool
+func (s *Subpool) Stop() {
+	if s.healthCheckTimer != nil {
+		s.healthCheckTimer.Stop()
+	}
 }
 
 // GetApplication returns the first matching application for the given request
