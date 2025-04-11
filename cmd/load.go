@@ -50,5 +50,11 @@ func loadConfig(cmd *cobra.Command, args []string) {
 		log.Fatal("Failed to save configuration to Redis:", err)
 	}
 
+	// Notify other instances about the change
+	err = redisStorage.NotifyChange(cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to notify about configuration change: %v\n", err)
+	}
+
 	fmt.Printf("Successfully loaded route configuration from %s into Redis\n", routeConfigFile)
 }

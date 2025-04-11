@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -31,35 +32,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Create application manager
 	manager := limiter.NewApplicationManager()
 
-	// Setup configuration storage
-	var storage config.Storage
-	if proxyConfig.Redis.Local || len(proxyConfig.Redis.Addresses) > 0 {
-		// Use Redis storage
-		storage = config.NewRedisStorage(proxyConfig.Redis)
-
-		// Log Redis configuration
-		if proxyConfig.Redis.Local {
-			log.Printf("Using local Redis instance at localhost:6379\n")
-		} else {
-			log.Printf("Using Redis cluster with %d nodes\n", len(proxyConfig.Redis.Addresses))
-		}
-
-		if len(proxyConfig.Redis.Sentinel.Addresses) > 0 {
-			log.Printf("Using Redis Sentinel with %d nodes\n", len(proxyConfig.Redis.Sentinel.Addresses))
-		}
-	} else {
-		// Use embedded route configuration or default to route-config.yaml
-		routeConfigFile := "route-config.yaml"
-		storage = config.NewYAMLStorage(routeConfigFile)
-		log.Printf("Using YAML file for configuration storage: %s\n", routeConfigFile)
-	}
-
-	// Load initial configuration
-	cfg, err := storage.Load()
-	if err != nil {
-		log.Fatal("Failed to load configuration:", err)
-	}
-
 	// Create Redis client for rate limiting
 	var redisAddresses []string
 	if proxyConfig.Redis.Local {
@@ -78,6 +50,52 @@ func runProxy(cmd *cobra.Command, args []string) {
 		PoolSize:   proxyConfig.Redis.PoolSize,
 		ReadOnly:   true,
 	})
+
+	// Setup configuration storage
+	var storage config.Storage
+	if proxyConfig.Redis.Local || len(proxyConfig.Redis.Addresses) > 0 {
+		// Use Redis storage
+		redisStorage := config.NewRedisStorage(proxyConfig.Redis)
+		storage = redisStorage
+
+		// Log Redis configuration
+		if proxyConfig.Redis.Local {
+			log.Printf("Using local Redis instance at localhost:6379\n")
+		} else {
+			log.Printf("Using Redis cluster with %d nodes\n", len(proxyConfig.Redis.Addresses))
+		}
+
+		if len(proxyConfig.Redis.Sentinel.Addresses) > 0 {
+			log.Printf("Using Redis Sentinel with %d nodes\n", len(proxyConfig.Redis.Sentinel.Addresses))
+		}
+
+		// Start watching for Redis configuration changes
+		go func() {
+			log.Printf("Watching for Redis configuration changes\n")
+			if err := redisStorage.Watch(context.Background(), func(newCfg *config.RouteConfig) {
+				if newCfg != nil {
+					log.Printf("Updating configuration from Redis\n")
+					// Create new applications with the updated config
+					newApps := newCfg.ToApplications(rlRedisClient)
+					// Update the application manager
+					manager.Applications = newApps
+				}
+			}); err != nil {
+				log.Printf("Error watching Redis configuration: %v\n", err)
+			}
+		}()
+	} else {
+		// Use embedded route configuration or default to route-config.yaml
+		routeConfigFile := "route-config.yaml"
+		storage = config.NewYAMLStorage(routeConfigFile)
+		log.Printf("Using YAML file for configuration storage: %s\n", routeConfigFile)
+	}
+
+	// Load initial configuration
+	cfg, err := storage.Load()
+	if err != nil {
+		log.Fatal("Failed to load configuration:", err)
+	}
 
 	// Convert configuration to applications
 	apps := cfg.ToApplications(rlRedisClient)
