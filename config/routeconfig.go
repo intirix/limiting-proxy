@@ -43,6 +43,16 @@ type SubpoolConfig struct {
 	CheckInterval int `yaml:"checkInterval,omitempty"`
 	// SlowStartDuration is the duration over which to gradually increase the rate limit (in seconds)
 	SlowStartDuration int `yaml:"slowStartDuration,omitempty"`
+	// HealthCheckPath is the path to use for health checks (e.g. /health)
+	HealthCheckPath string `yaml:"healthCheckPath,omitempty"`
+	// HealthCheckInterval is how often to perform health checks (in seconds)
+	HealthCheckInterval int `yaml:"healthCheckInterval,omitempty"`
+	// HealthCheckTimeout is the timeout for health check requests (in seconds)
+	HealthCheckTimeout int `yaml:"healthCheckTimeout,omitempty"`
+	// RequiredSuccessfulChecks is the number of successful health checks required before adding a target
+	RequiredSuccessfulChecks int `yaml:"requiredSuccessfulChecks,omitempty"`
+	// AllowedFailedChecks is the number of consecutive failed health checks before removing a target
+	AllowedFailedChecks int `yaml:"allowedFailedChecks,omitempty"`
 }
 
 // PoolConfig represents a group of subpools

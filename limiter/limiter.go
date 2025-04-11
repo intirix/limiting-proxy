@@ -91,6 +91,16 @@ type Target struct {
 	Strategy RateLimitStrategy
 	// Proxy is the reverse proxy for this target
 	Proxy *httputil.ReverseProxy
+	// mu protects health check related fields
+	mu sync.RWMutex
+	// isHealthy indicates if the target is currently healthy
+	isHealthy bool
+	// consecutiveSuccesses tracks the number of consecutive successful health checks
+	consecutiveSuccesses int
+	// consecutiveFailures tracks the number of consecutive failed health checks
+	consecutiveFailures int
+	// lastHealthCheck is the time of the last health check
+	lastHealthCheck time.Time
 }
 
 // RateLimitType represents the type of rate limiting strategy to use
@@ -122,15 +132,113 @@ type Subpool struct {
 	CheckInterval int
 	// SlowStartDuration is the duration over which to gradually increase the rate limit
 	SlowStartDuration time.Duration
+	// HealthCheckPath is the path to use for health checks
+	HealthCheckPath string
+	// HealthCheckInterval is how often to perform health checks
+	HealthCheckInterval time.Duration
+	// HealthCheckTimeout is the timeout for health check requests
+	HealthCheckTimeout time.Duration
+	// RequiredSuccessfulChecks is the number of successful health checks required
+	RequiredSuccessfulChecks int
+	// AllowedFailedChecks is the number of consecutive failed health checks before removal
+	AllowedFailedChecks int
+	// healthCheckTimer is used to schedule periodic health checks
+	healthCheckTimer *time.Timer
 	// mu protects the targets list
 	mu sync.RWMutex
 	// totalWeight is the sum of target weights
 	totalWeight int
 }
 
+// performHealthCheck performs a health check on a target
+func (s *Subpool) performHealthCheck(target *Target) {
+	if s.HealthCheckPath == "" {
+		// If no health check path is configured, consider target healthy
+		target.mu.Lock()
+		target.isHealthy = true
+		target.mu.Unlock()
+		return
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: s.HealthCheckTimeout,
+		Transport: target.Proxy.Transport,
+	}
+
+	// Create health check URL
+	healthURL := *target.URL
+	healthURL.Path = path.Join(healthURL.Path, s.HealthCheckPath)
+
+	// Perform health check
+	resp, err := client.Get(healthURL.String())
+	target.mu.Lock()
+	defer target.mu.Unlock()
+
+	target.lastHealthCheck = time.Now()
+
+	if err != nil {
+		log.Printf("Health check failed for target %s: %v", target.Name, err)
+		target.consecutiveSuccesses = 0
+		target.consecutiveFailures++
+		if target.consecutiveFailures >= s.AllowedFailedChecks {
+			target.isHealthy = false
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check if response status code is 2xx
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		target.consecutiveFailures = 0
+		target.consecutiveSuccesses++
+		if target.consecutiveSuccesses >= s.RequiredSuccessfulChecks {
+			target.isHealthy = true
+		}
+	} else {
+		log.Printf("Health check failed for target %s: status code %d", target.Name, resp.StatusCode)
+		target.consecutiveSuccesses = 0
+		target.consecutiveFailures++
+		if target.consecutiveFailures >= s.AllowedFailedChecks {
+			target.isHealthy = false
+		}
+	}
+}
+
+// startHealthChecks starts periodic health checks for all targets
+func (s *Subpool) startHealthChecks() {
+	if s.HealthCheckInterval <= 0 || s.HealthCheckPath == "" {
+		return
+	}
+
+	// Stop existing timer if any
+	if s.healthCheckTimer != nil {
+		s.healthCheckTimer.Stop()
+	}
+
+	// Start periodic health checks
+	s.healthCheckTimer = time.NewTimer(0) // First check immediately
+	go func() {
+		for {
+			<-s.healthCheckTimer.C
+			s.mu.RLock()
+			targets := s.Targets
+			s.mu.RUnlock()
+
+			// Check all targets
+			for _, target := range targets {
+				s.performHealthCheck(target)
+			}
+
+			// Reset timer for next check
+			s.healthCheckTimer.Reset(s.HealthCheckInterval)
+		}
+	}()
+}
+
 // NewSubpool creates a new Subpool
 func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration) *Subpool {
-	return &Subpool{
+	s := &Subpool{
 		Name:              name,
 		Weight:            weight,
 		Targets:           make([]*Target, 0),
@@ -140,6 +248,11 @@ func NewSubpool(name string, weight, limit int, window time.Duration, insecureSk
 		CheckInterval:      checkInterval,
 		SlowStartDuration:  slowStartDuration,
 	}
+
+	// Start health checks
+	s.startHealthChecks()
+
+	return s
 }
 
 // AddTarget adds a new target to the subpool
@@ -192,12 +305,20 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 		URL:      targetURL,
 		Strategy: strategy,
 		Proxy:    proxy,
+		isHealthy: false, // Start unhealthy until health checks pass
+		consecutiveSuccesses: 0,
+		consecutiveFailures: 0,
+		lastHealthCheck: time.Time{},
 	}
 	s.Targets = append(s.Targets, target)
+
+	// Perform initial health check
+	go s.performHealthCheck(target)
+
 	return target
 }
 
-// GetAvailableTarget returns a target that hasn't hit its rate limit
+// GetAvailableTarget returns a target that hasn't hit its rate limit and is healthy
 func (s *Subpool) GetAvailableTarget() *Target {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -210,7 +331,12 @@ func (s *Subpool) GetAvailableTarget() *Target {
 	indices := rand.Perm(len(s.Targets))
 	for _, i := range indices {
 		target := s.Targets[i]
-		if target.Strategy.IsAllowed(target.Name) {
+		// Check health status
+		target.mu.RLock()
+		isHealthy := target.isHealthy
+		target.mu.RUnlock()
+
+		if isHealthy && target.Strategy.IsAllowed(target.Name) {
 			return target
 		}
 	}
