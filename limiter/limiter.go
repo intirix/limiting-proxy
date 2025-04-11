@@ -238,7 +238,20 @@ func (s *Subpool) StartHealthChecks() {
 }
 
 // NewSubpool creates a new Subpool
-func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration, healthCheckPath string, healthCheckInterval, healthCheckTimeout time.Duration, requiredSuccessfulChecks, allowedFailedChecks int) *Subpool {
+func NewSubpool(name string, weight, limit int, window time.Duration, insecureSkipVerify bool, checkInterval int, slowStartDuration time.Duration, healthCheckPath string, healthCheckInterval, healthCheckTimeout time.Duration, requiredSuccessfulChecks, allowedFailedChecks int, rateLimitType string) *Subpool {
+	// Convert string to RateLimitType
+	var rateLimit RateLimitType
+	switch rateLimitType {
+	case "fixed-window":
+		rateLimit = FixedWindow
+	case "sliding-window":
+		rateLimit = SlidingWindow
+	case "no-limit":
+		rateLimit = NoLimit
+	default:
+		rateLimit = FixedWindow
+	}
+
 	s := &Subpool{
 		Name:                    name,
 		Weight:                  weight,
@@ -253,6 +266,7 @@ func NewSubpool(name string, weight, limit int, window time.Duration, insecureSk
 		HealthCheckTimeout:      healthCheckTimeout,
 		RequiredSuccessfulChecks: requiredSuccessfulChecks,
 		AllowedFailedChecks:     allowedFailedChecks,
+		RateLimitType:           rateLimit,
 	}
 
 	return s
@@ -302,6 +316,9 @@ func (s *Subpool) AddTarget(name, rawURL string, redisClient *redis.Client) *Tar
 	default:
 		strategy = NewFixedWindowRedis(redisClient, s.RequestLimit, s.TimeWindow, "fixed", checkInterval, s.SlowStartDuration)
 	}
+
+	// log the type of the strategy
+	log.Printf("Created strategy of type %T for target %s\n", strategy, name)
 
 	target := &Target{
 		Name:     name,

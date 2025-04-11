@@ -3,6 +3,7 @@ package limiter
 import (
 	"context"
 	"fmt"
+	//"log"
 	"sync"
 	"time"
 
@@ -80,7 +81,11 @@ func (fw *FixedWindowRedis) IsAllowed(key string) bool {
 		fw.localCounters.Store(windowKey, int64(0))
 		fw.lastSync.Store(windowKey, time.Now())
 
-		return incr.Val() <= currentLimit
+		v := incr.Val()
+
+		//log.Printf("currentValue: %d, currentLimit: %d", v, currentLimit)
+
+		return v <= currentLimit
 	}
 
 	// If we haven't synced, estimate based on local counter
@@ -184,7 +189,10 @@ func (sw *SlidingWindowRedis) IsAllowed(key string) bool {
 		sw.localCounters.Store(key, int64(0))
 		sw.lastSync.Store(key, now)
 
-		return count.Val() <= currentLimit
+		v := count.Val()
+		//log.Printf("currentValue: %d, currentLimit: %d", v, currentLimit)
+
+		return v <= currentLimit
 	}
 
 	// If we haven't synced, use local count

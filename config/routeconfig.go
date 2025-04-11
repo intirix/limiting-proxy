@@ -188,6 +188,7 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 						time.Duration(subpoolConfig.HealthCheckTimeout)*time.Second,
 						subpoolConfig.RequiredSuccessfulChecks,
 						subpoolConfig.AllowedFailedChecks,
+						subpoolConfig.RateLimitType,
 					)
 
 					// Add targets to the subpool
