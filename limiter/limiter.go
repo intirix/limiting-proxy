@@ -686,11 +686,31 @@ func (app *Application) GetMatchingInstance(host, reqPath, method string) *Insta
 
 // GetLimiter returns a rate limiter and proxy from a matching instance
 func (app *Application) GetLimiter(key, host, reqPath, method string) (RateLimitStrategy, *httputil.ReverseProxy) {
-	inst := app.GetMatchingInstance(host, reqPath, method)
-	if inst == nil {
-		return nil, nil
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+
+	// Try all matching instances until we find one that allows the request
+	// First try instances with specific filters
+	for _, inst := range app.Instances {
+		if inst.Filter.Matches(host, reqPath, method) {
+			rl, proxy := inst.GetLimiter(key)
+			if rl != nil && proxy != nil {
+				return rl, proxy
+			}
+		}
 	}
-	return inst.GetLimiter(key)
+
+	// Then try instances with empty filters as fallback
+	for _, inst := range app.Instances {
+		if inst.Filter.HostHeader == "" && inst.Filter.PathPrefix == "" && len(inst.Filter.Methods) == 0 {
+			rl, proxy := inst.GetLimiter(key)
+			if rl != nil && proxy != nil {
+				return rl, proxy
+			}
+		}
+	}
+
+	return nil, nil
 }
 
 
