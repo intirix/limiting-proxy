@@ -45,7 +45,11 @@ type SubpoolConfig struct {
 	CheckInterval int `yaml:"checkInterval,omitempty"`
 	// SlowStartDuration is the duration over which to gradually increase the rate limit (in seconds)
 	SlowStartDuration int `yaml:"slowStartDuration,omitempty"`
-	// HealthCheckPath is the path to use for health checks (e.g. /health)
+	// DeepHealthCheckPath is the path to use for deep health checks (e.g. /deep-health)
+	DeepHealthCheckPath string `yaml:"deepHealthCheckPath,omitempty"`
+	// ShallowHealthCheckPath is the path to use for shallow health checks (e.g. /shallow-health)
+	ShallowHealthCheckPath string `yaml:"shallowHealthCheckPath,omitempty"`
+	// HealthCheckPath is the legacy path for health checks (deprecated, use DeepHealthCheckPath and ShallowHealthCheckPath instead)
 	HealthCheckPath string `yaml:"healthCheckPath,omitempty"`
 	// HealthCheckInterval is how often to perform health checks (in seconds)
 	HealthCheckInterval int `yaml:"healthCheckInterval,omitempty"`
@@ -185,7 +189,9 @@ func (c *RouteConfig) ToApplications(redisClient redis.UniversalClient) []*limit
 						subpoolConfig.InsecureSkipVerify,
 						subpoolConfig.CheckInterval,
 						time.Duration(subpoolConfig.SlowStartDuration)*time.Second,
-						subpoolConfig.HealthCheckPath,
+						subpoolConfig.DeepHealthCheckPath,
+						subpoolConfig.ShallowHealthCheckPath,
+						subpoolConfig.HealthCheckPath, // Legacy field for backward compatibility
 						time.Duration(subpoolConfig.HealthCheckInterval)*time.Second,
 						time.Duration(subpoolConfig.HealthCheckTimeout)*time.Second,
 						subpoolConfig.RequiredSuccessfulChecks,

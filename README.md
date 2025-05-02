@@ -43,11 +43,17 @@ The proxy server is configured using YAML files. Configuration includes:
 - `slowStartDuration`: Duration for gradual traffic ramp-up
 
 ### Health Check Configuration
-- `healthCheckPath`: Path for health check requests (e.g., /health)
+- `deepHealthCheckPath`: Path for deep health check requests (e.g., /deep-health)
+- `shallowHealthCheckPath`: Path for shallow health check requests (e.g., /shallow-health)
+- `healthCheckPath`: Legacy path for health check requests (deprecated, use the above instead)
 - `healthCheckInterval`: Interval between health checks (in seconds)
 - `healthCheckTimeout`: Timeout for health check requests
 - `requiredSuccessfulChecks`: Number of successful checks before enabling a target
 - `allowedFailedChecks`: Number of consecutive failures before disabling a target
+
+Deep and shallow health checks serve different purposes:
+- **Deep Health Checks**: Targets must pass deep health checks to be initially put into service. These are more thorough checks that verify the target is fully operational.
+- **Shallow Health Checks**: Once a target has passed a deep health check, only shallow health checks are used to determine if it should be taken out of service. These are typically lighter-weight checks that verify basic responsiveness.
 
 ### TLS Configuration
 - `insecureSkipVerify`: Option to skip SSL certificate validation
@@ -97,21 +103,3 @@ The proxy supports:
 - Connection pooling
 - Authentication and database selection
 
-### Example Usage
-
-```bash
-# Using local file configuration
-go run main.go --route-config my-routes.yaml
-
-# Using local Redis instance
-go run main.go --redis-local
-
-# Using Redis cluster
-go run main.go --redis-addrs "redis1:6379,redis2:6379" --redis-password "mypass"
-
-# Using Redis with Sentinel
-go run main.go \
-  --redis-addrs "redis1:6379,redis2:6379" \
-  --redis-sentinel-addrs "sentinel1:26379,sentinel2:26379" \
-  --redis-sentinel-master "mymaster"
-```

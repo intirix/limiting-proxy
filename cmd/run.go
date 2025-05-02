@@ -75,8 +75,14 @@ func runProxy(cmd *cobra.Command, args []string) {
 			if err := redisStorage.Watch(context.Background(), func(newCfg *config.RouteConfig) {
 				if newCfg != nil {
 					log.Printf("Updating configuration from Redis\n")
-					// map of all the target's health status
+					// maps to store all the target's health statuses
 					targetHealth := make(map[string]bool)
+					targetDeepHealth := make(map[string]bool)
+					targetShallowHealth := make(map[string]bool)
+					targetDeepSuccesses := make(map[string]int)
+					targetDeepFailures := make(map[string]int)
+					targetShallowSuccesses := make(map[string]int)
+					targetShallowFailures := make(map[string]int)
 
 					// Stop health check timers in old applications
 					for _, app := range manager.Applications {
@@ -86,7 +92,14 @@ func runProxy(cmd *cobra.Command, args []string) {
 									subpool.Stop()
 									// save the health status of the target
 									for _, target := range subpool.Targets {
-										targetHealth[target.URL.String()] = target.IsHealthy
+										url := target.URL.String()
+										targetHealth[url] = target.IsHealthy
+										targetDeepHealth[url] = target.DeepHealthy
+										targetShallowHealth[url] = target.ShallowHealthy
+										targetDeepSuccesses[url] = target.GetConsecutiveDeepSuccesses()
+										targetDeepFailures[url] = target.GetConsecutiveDeepFailures()
+										targetShallowSuccesses[url] = target.GetConsecutiveShallowSuccesses()
+										targetShallowFailures[url] = target.GetConsecutiveShallowFailures()
 									}
 								}
 							}
@@ -105,8 +118,36 @@ func runProxy(cmd *cobra.Command, args []string) {
 									subpool.StartHealthChecks()
 									// restore the health status of the target
 									for _, target := range subpool.Targets {
-										if _, ok := targetHealth[target.URL.String()]; ok {
-											target.IsHealthy = targetHealth[target.URL.String()]
+										url := target.URL.String()
+										if _, ok := targetHealth[url]; ok {
+											// Restore legacy health status
+											target.IsHealthy = targetHealth[url]
+											
+											// Restore deep health status
+											if deepHealthy, ok := targetDeepHealth[url]; ok {
+												target.DeepHealthy = deepHealthy
+											}
+											
+											// Restore shallow health status
+											if shallowHealthy, ok := targetShallowHealth[url]; ok {
+												target.ShallowHealthy = shallowHealthy
+											}
+											
+											// Restore deep health counters
+											if successes, ok := targetDeepSuccesses[url]; ok {
+												target.SetConsecutiveDeepSuccesses(successes)
+											}
+											if failures, ok := targetDeepFailures[url]; ok {
+												target.SetConsecutiveDeepFailures(failures)
+											}
+											
+											// Restore shallow health counters
+											if successes, ok := targetShallowSuccesses[url]; ok {
+												target.SetConsecutiveShallowSuccesses(successes)
+											}
+											if failures, ok := targetShallowFailures[url]; ok {
+												target.SetConsecutiveShallowFailures(failures)
+											}
 										}
 									}
 								}
