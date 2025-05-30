@@ -9,9 +9,10 @@ import (
 
 // ProxyConfig represents the main proxy configuration
 type ProxyConfig struct {
-	Listen string       `yaml:"listen"`
-	Redis  RedisConfig  `yaml:"redis"`
-	Routes RouteConfig  `yaml:"routes"`
+	Listen      string      `yaml:"listen"`
+	AdminListen string      `yaml:"admin_listen"`
+	Redis       RedisConfig `yaml:"redis"`
+	Routes      RouteConfig `yaml:"routes"`
 }
 
 // LoadProxyConfig loads the proxy configuration from a YAML file

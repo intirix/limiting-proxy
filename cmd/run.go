@@ -2,27 +2,39 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
-	
+	httpprof "net/http/pprof" // For HTTP pprof handlers
+	"sync"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"limiting_proxy/config"
 	"limiting_proxy/limiter"
 )
 
-var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Run the proxy server",
-	Long:  `Start the rate-limiting proxy server with the specified configuration.`,
-	Run:   runProxy,
-}
+var (
+	adminListen string
+
+	runCmd = &cobra.Command{
+		Use:   "run",
+		Short: "Run the proxy server",
+		Long:  `Start the rate-limiting proxy server with the specified configuration.`,
+		Run:   runProxy,
+	}
+)
 
 func init() {
+	runCmd.Flags().StringVar(&adminListen, "admin-listen", "", "address for admin HTTP server (e.g., :8081)")
+	// Add an alias for the flag to support both formats
+	runCmd.Flags().StringVar(&adminListen, "admin-listener", "", "alias for admin-listen")
 	rootCmd.AddCommand(runCmd)
 }
 
 func runProxy(cmd *cobra.Command, args []string) {
+	// Create a WaitGroup to wait for all servers to shut down
+	var wg sync.WaitGroup
 	// Load proxy configuration
 	proxyConfig, err := config.LoadProxyConfig(configFile)
 	if err != nil {
@@ -122,17 +134,17 @@ func runProxy(cmd *cobra.Command, args []string) {
 										if _, ok := targetHealth[url]; ok {
 											// Restore legacy health status
 											target.IsHealthy = targetHealth[url]
-											
+
 											// Restore deep health status
 											if deepHealthy, ok := targetDeepHealth[url]; ok {
 												target.DeepHealthy = deepHealthy
 											}
-											
+
 											// Restore shallow health status
 											if shallowHealthy, ok := targetShallowHealth[url]; ok {
 												target.ShallowHealthy = shallowHealthy
 											}
-											
+
 											// Restore deep health counters
 											if successes, ok := targetDeepSuccesses[url]; ok {
 												target.SetConsecutiveDeepSuccesses(successes)
@@ -140,7 +152,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 											if failures, ok := targetDeepFailures[url]; ok {
 												target.SetConsecutiveDeepFailures(failures)
 											}
-											
+
 											// Restore shallow health counters
 											if successes, ok := targetShallowSuccesses[url]; ok {
 												target.SetConsecutiveShallowSuccesses(successes)
@@ -213,7 +225,74 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	log.Printf("Starting proxy server on %s\n", proxyConfig.Listen)
 
-	if err := http.ListenAndServe(proxyConfig.Listen, nil); err != nil {
-		log.Fatal(err)
+	// Determine if we should start the admin server
+	adminAddress := adminListen
+	if adminAddress == "" {
+		adminAddress = proxyConfig.AdminListen
 	}
+
+	if adminAddress != "" {
+		// Create a separate ServeMux for the admin server
+		adminMux := http.NewServeMux()
+
+		// Register pprof handlers
+		adminMux.HandleFunc("/debug/pprof/", httpprof.Index)
+		adminMux.HandleFunc("/debug/pprof/cmdline", httpprof.Cmdline)
+		adminMux.HandleFunc("/debug/pprof/profile", httpprof.Profile)
+		adminMux.HandleFunc("/debug/pprof/symbol", httpprof.Symbol)
+		adminMux.HandleFunc("/debug/pprof/trace", httpprof.Trace)
+		// Register handlers for heap, goroutine, etc.
+		adminMux.Handle("/debug/pprof/goroutine", httpprof.Handler("goroutine"))
+		adminMux.Handle("/debug/pprof/heap", httpprof.Handler("heap"))
+		adminMux.Handle("/debug/pprof/threadcreate", httpprof.Handler("threadcreate"))
+		adminMux.Handle("/debug/pprof/block", httpprof.Handler("block"))
+		adminMux.Handle("/debug/pprof/mutex", httpprof.Handler("mutex"))
+
+		// Add admin endpoints
+		adminMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+		})
+
+		// Add status endpoint that shows application statistics
+		adminMux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+
+			fmt.Fprintf(w, "Limiting Proxy Status\n")
+			fmt.Fprintf(w, "====================\n\n")
+
+			// Print applications information
+			fmt.Fprintf(w, "Applications: %d\n", len(manager.Applications))
+			for i, app := range manager.Applications {
+				fmt.Fprintf(w, "\nApplication %d: %s\n", i+1, app.Name)
+				fmt.Fprintf(w, "  Instances: %d\n", len(app.Instances))
+				for j, instance := range app.Instances {
+					fmt.Fprintf(w, "  Instance %d:\n", j+1)
+					fmt.Fprintf(w, "    Host: %s\n", instance.Filter.HostHeader)
+					fmt.Fprintf(w, "    Path: %s\n", instance.Filter.PathPrefix)
+					fmt.Fprintf(w, "    Methods: %v\n", instance.Filter.Methods)
+					fmt.Fprintf(w, "    Pools: %d\n", len(instance.Pools))
+				}
+			}
+		})
+
+		// Start admin server in a goroutine
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Printf("Starting admin server on %s\n", adminAddress)
+			if err := http.ListenAndServe(adminAddress, adminMux); err != nil {
+				log.Printf("Admin server error: %v\n", err)
+			}
+		}()
+	}
+
+	// Start the main proxy server
+	if err := http.ListenAndServe(proxyConfig.Listen, nil); err != nil {
+		log.Printf("Proxy server error: %v\n", err)
+	}
+
+	// Wait for admin server to shut down (though we'll likely never reach this point)
+	wg.Wait()
 }
