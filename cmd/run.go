@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	httpprof "net/http/pprof" // For HTTP pprof handlers
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -26,9 +29,9 @@ var (
 )
 
 func init() {
-	runCmd.Flags().StringVar(&adminListen, "admin-listen", "", "address for admin HTTP server (e.g., :8081)")
+	runCmd.Flags().StringVar(&adminListen, "admin-listen", "", "address for admin HTTP server (e.g., :8081 or /path/to/socket.sock for Unix domain socket)")
 	// Add an alias for the flag to support both formats
-	runCmd.Flags().StringVar(&adminListen, "admin-listener", "", "alias for admin-listen")
+	runCmd.Flags().StringVar(&adminListen, "admin-listener", "", "alias for admin-listen (e.g., :8081 or /path/to/socket.sock for Unix domain socket)")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -282,8 +285,38 @@ func runProxy(cmd *cobra.Command, args []string) {
 		go func() {
 			defer wg.Done()
 			log.Printf("Starting admin server on %s\n", adminAddress)
-			if err := http.ListenAndServe(adminAddress, adminMux); err != nil {
-				log.Printf("Admin server error: %v\n", err)
+
+			// Check if adminAddress is a Unix socket path
+			// A simple check: if it starts with '/' or './' and doesn't contain ':', assume Unix socket
+			// For more robustness, one might use a prefix like "unix:"
+			if (strings.HasPrefix(adminAddress, "/") || strings.HasPrefix(adminAddress, "./")) && !strings.Contains(adminAddress, ":") {
+				// Remove the socket file if it already exists
+				if _, err := os.Stat(adminAddress); err == nil {
+					if err := os.Remove(adminAddress); err != nil {
+						log.Printf("Failed to remove existing socket file %s: %v\n", adminAddress, err)
+						return
+					}
+				}
+				listener, err := net.Listen("unix", adminAddress)
+				if err != nil {
+					log.Printf("Failed to listen on Unix socket %s: %v\n", adminAddress, err)
+					return
+				}
+				defer listener.Close()
+				// Ensure the socket file has appropriate permissions (e.g., 0777 or more restrictive)
+				if err := os.Chmod(adminAddress, 0777); err != nil {
+					log.Printf("Failed to chmod socket file %s: %v\n", adminAddress, err)
+				}
+				log.Printf("Admin server listening on Unix socket %s\n", adminAddress)
+				if err := http.Serve(listener, adminMux); err != nil {
+					log.Printf("Admin server (Unix socket) error: %v\n", err)
+				}
+			} else {
+				// Assume TCP socket
+				log.Printf("Admin server listening on TCP %s\n", adminAddress)
+				if err := http.ListenAndServe(adminAddress, adminMux); err != nil {
+					log.Printf("Admin server (TCP) error: %v\n", err)
+				}
 			}
 		}()
 	}
