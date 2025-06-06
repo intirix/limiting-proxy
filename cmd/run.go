@@ -229,8 +229,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	log.Printf("Starting proxy server on %s\n", proxyConfig.Listen)
 
 	// Determine if we should start the admin server
-	adminAddress := adminListen
-	if adminAddress == "" {
+	adminAddress := adminListen // Get value from command-line flag
+	if adminAddress == "" {      // If flag is not set, use value from config
 		adminAddress = proxyConfig.AdminListen
 	}
 

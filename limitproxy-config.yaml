@@ -1,5 +1,6 @@
 # Main proxy configuration
 listen: ":8080"
+admin_listen: ":8081"  # Admin server listener (TCP or /path/to/socket.sock)
 
 # Redis configuration
 redis:
@@ -28,14 +29,5 @@ redis:
   #     - "sentinel2:26379"
   #   masterName: "mymaster"
 
-# Route configuration can be embedded here or loaded from a separate file
-# routes:
-#   applications:
-#     - name: "api"
-#       priority: 1
-#       filters:
-#         - host: "api.example.com"
-#           path: "/api"
-#           methods: ["POST", "PUT", "DELETE"]
-#           limit: 50
-#           interval: 60
+routes:
+  applications: []
