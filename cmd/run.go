@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"limiting_proxy/internal/tlsutil"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
@@ -38,6 +41,7 @@ func init() {
 func runProxy(cmd *cobra.Command, args []string) {
 	// Create a WaitGroup to wait for all servers to shut down
 	var wg sync.WaitGroup
+	var mainProxyErr error
 	// Load proxy configuration
 	proxyConfig, err := config.LoadProxyConfig(configFile)
 	if err != nil {
@@ -322,9 +326,46 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	// Start the main proxy server
-	if err := http.ListenAndServe(proxyConfig.Listen, nil); err != nil {
-		log.Printf("Proxy server error: %v\n", err)
+	mainProxyServer := &http.Server{
+		Addr:    proxyConfig.Listen,
+		Handler: http.DefaultServeMux, // Assuming http.DefaultServeMux is used for main proxy handlers
 	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Printf("Attempting to start main proxy server on %s\n", proxyConfig.Listen)
+		if proxyConfig.ListenTLS.Enable {
+			if proxyConfig.ListenTLS.CertFile != "" && proxyConfig.ListenTLS.KeyFile != "" {
+				log.Printf("Main proxy server listening with provided TLS certificate on https://%s\n", proxyConfig.Listen)
+				mainProxyServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12} // Example: Enforce TLS 1.2+
+				mainProxyErr = mainProxyServer.ListenAndServeTLS(proxyConfig.ListenTLS.CertFile, proxyConfig.ListenTLS.KeyFile)
+			} else if proxyConfig.ListenTLS.GenerateCert {
+				log.Printf("Generating self-signed certificate for main proxy server on %s\n", proxyConfig.Listen)
+				certPEM, keyPEM, genErr := tlsutil.GenerateSelfSignedCertBytes()
+				if genErr != nil {
+					log.Fatalf("Failed to generate self-signed certificate for main proxy: %v", genErr)
+				}
+				cert, err := tls.X509KeyPair(certPEM, keyPEM)
+				if err != nil {
+					log.Fatalf("Failed to load generated key pair for main proxy: %v", err)
+				}
+				mainProxyServer.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+				log.Printf("Main proxy server listening with generated TLS certificate on https://%s\n", proxyConfig.Listen)
+				mainProxyErr = mainProxyServer.ListenAndServeTLS("", "") // Certs are in TLSConfig
+			} else {
+				log.Printf("Main proxy server configured for TLS but no certs provided or to generate. Starting plain HTTP on %s as fallback.\n", proxyConfig.Listen)
+				mainProxyErr = mainProxyServer.ListenAndServe()
+			}
+		} else {
+			log.Printf("Main proxy server listening on http://%s\n", proxyConfig.Listen)
+			mainProxyErr = mainProxyServer.ListenAndServe()
+		}
+
+		if mainProxyErr != nil && mainProxyErr != http.ErrServerClosed {
+			log.Printf("Main proxy server error: %v\n", mainProxyErr)
+		}
+	}()
 
 	// Wait for admin server to shut down (though we'll likely never reach this point)
 	wg.Wait()

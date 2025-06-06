@@ -7,11 +7,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TLSConfigSettings holds configuration for TLS
+type TLSConfigSettings struct {
+	Enable       bool   `yaml:"enable"`
+	GenerateCert bool   `yaml:"generate_cert"`
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
+}
+
 // ProxyConfig represents the main proxy configuration
 type ProxyConfig struct {
 	Listen      string      `yaml:"listen"`
-	AdminListen string      `yaml:"admin_listen"`
-	Redis       RedisConfig `yaml:"redis"`
+	AdminListen    string            `yaml:"admin_listen"`
+	ListenTLS      TLSConfigSettings `yaml:"listen_tls"`
+	AdminListenTLS TLSConfigSettings `yaml:"admin_listen_tls"`
+	Redis          RedisConfig       `yaml:"redis"`
 	Routes      RouteConfig `yaml:"routes"`
 }
 
